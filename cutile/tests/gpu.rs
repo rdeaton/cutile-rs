@@ -44,6 +44,9 @@ mod program_id;
 #[path = "gpu/launch_site.rs"]
 mod launch_site;
 
+#[path = "gpu/launch_plan.rs"]
+mod launch_plan;
+
 #[path = "gpu/add_refs.rs"]
 mod add_refs;
 

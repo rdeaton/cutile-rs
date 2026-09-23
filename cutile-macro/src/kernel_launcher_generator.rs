@@ -536,6 +536,11 @@ pub fn generate_kernel_launcher(
     let mut builder_statements = vec![];
     let mut launch_grid_expr_strs = vec![];
     let mut validator_statements = vec![];
+    // Per-parameter layout expressions for `.plan()` (see `cutile::plan`).
+    let mut plan_layout_exprs: Vec<String> = vec![];
+    // Per-parameter kind markers for `Kernel::Params` (see `cutile::plan::param`).
+    let mut plan_param_kinds: Vec<String> = vec![];
+    let plan_param = |kind: &str| format!("{tile_rust_crate_root}::plan::param::{kind}");
     let mut arg_types: Vec<Type> = vec![];
     // Track element type per param (Some for &Tensor params, None for others).
     let mut param_element_types: Vec<Option<String>> = vec![];
@@ -544,12 +549,20 @@ pub fn generate_kernel_launcher(
     let mut required_generics: RequiredGenerics = RequiredGenerics::new(&item.sig.generics);
     for (i, ty) in input_types.iter().enumerate() {
         let var_name = &param_names[i];
+        // Where this parameter's driver arguments start, for `.plan()`.
+        builder_statements.push(parse_stmt(format!(
+            "__plan_starts[{i}] = kernel_launch.arg_count();"
+        )));
         match ty {
             Type::Reference(ref_ty) => {
                 let res = get_tensor_code(i, var_name, ref_ty, &mut required_generics)?;
                 let tensor_kind = if ref_ty.mutability.is_some() {
+                    plan_layout_exprs.push(format!("KernelOutputStored::plan_layout(&{var_name})"));
+                    plan_param_kinds.push(plan_param("Out"));
                     TensorParamKind::Output
                 } else {
+                    plan_layout_exprs.push(format!("KernelInputStored::plan_layout(&{var_name})"));
+                    plan_param_kinds.push(plan_param("In"));
                     TensorParamKind::Input
                 };
                 tensor_param_kinds.insert(var_name.clone(), tensor_kind);
@@ -569,6 +582,11 @@ pub fn generate_kernel_launcher(
                     let ref_ty: TypeReference = parse_quote!(&mut #path_ty);
                     let res = get_tensor_code(i, var_name, &ref_ty, &mut required_generics)?;
                     tensor_param_kinds.insert(var_name.clone(), TensorParamKind::Output);
+                    // Mapped outputs cannot be planned: the kernel gets no
+                    // plan methods (see `plannable` below). The layout still
+                    // refuses at runtime, as a backstop.
+                    plan_layout_exprs.push(format!("KernelOutputStored::plan_layout(&{var_name})"));
+                    plan_param_kinds.push(plan_param("Unsupported"));
                     arg_types.push(res.fn_arg.ty.as_ref().clone());
                     param_element_types.push(res.element_type_name);
                     stride_args.push(res.stride_expr_str);
@@ -591,8 +609,30 @@ pub fn generate_kernel_launcher(
                     );
                 }
                 builder_statements.push(parse_stmt(format!("kernel_launch.push_arg({var_name});")));
+                let hinted = cutile_compiler::specialization::is_integer_scalar(&type_name);
+                // The layout records the launcher's own hint expression.
+                let plan_hint = if hinted {
+                    format!("Some({tile_rust_crate_root}::cutile_compiler::specialization::DivHint::from_value({var_name} as i32))")
+                } else {
+                    "None".to_string()
+                };
+                plan_layout_exprs.push(format!(
+                    "Ok({tile_rust_crate_root}::plan::ArgLayout::scalar::<{type_name}>({plan_hint}))"
+                ));
+                // The kernel marker is not generic, so it cannot name a
+                // scalar of a type parameter.
+                let generic_scalar = item
+                    .sig
+                    .generics
+                    .type_params()
+                    .any(|tp| tp.ident == type_name);
+                plan_param_kinds.push(if generic_scalar {
+                    plan_param("AnyScalar")
+                } else {
+                    plan_param(&format!("Scalar<{type_name}>"))
+                });
                 // For integer scalar params, auto-compute DivHint at launch time.
-                if cutile_compiler::specialization::is_integer_scalar(&type_name) {
+                if hinted {
                     scalar_hint_exprs.push(format!(
                         r#"("{var_name}".to_string(), {tile_rust_crate_root}::cutile_compiler::specialization::DivHint::from_value({var_name} as i32))"#
                     ));
@@ -633,6 +673,10 @@ pub fn generate_kernel_launcher(
                 builder_statements.push(parse_stmt(format!(
                     "unsafe {{ kernel_launch.push_device_ptr({var_name}.cu_deviceptr()); }}"
                 )));
+                plan_layout_exprs.push(format!(
+                    "Ok({tile_rust_crate_root}::plan::ArgLayout::pointer::<{type_name}>({var_name}.cu_deviceptr()))"
+                ));
+                plan_param_kinds.push(plan_param("Ptr"));
                 scalar_hint_exprs.push(format!(
                     r#"("{var_name}".to_string(), {tile_rust_crate_root}::cutile_compiler::specialization::DivHint::from_ptr({var_name}.cu_deviceptr()))"#
                 ));
@@ -732,6 +776,13 @@ pub fn generate_kernel_launcher(
         })
         .collect();
     let recovered_tuple_str = to_tuple_string(&recovered_fields);
+    // `Kernel::Params` and the captured layouts must agree parameter by
+    // parameter: sealed `Kernel`s let plans index one by the other.
+    assert_eq!(
+        plan_layout_exprs.len(),
+        plan_param_kinds.len(),
+        "internal error: plan layouts and parameter kinds disagree"
+    );
     let kernel_input_info = KernelInputInfo {
         type_param_names: ki_type_param_names,
         element_type_names: ki_element_type_names,
@@ -740,6 +791,10 @@ pub fn generate_kernel_launcher(
         ko_element_type_names: ko_element_type_names.clone(),
         param_kernel_output_idx: ko_param_idx.clone(),
         recovered_tuple_str: recovered_tuple_str.clone(),
+        plannable: !plan_param_kinds
+            .iter()
+            .any(|kind| kind.ends_with("::Unsupported")),
+        plan_param_kinds,
     };
 
     // Build stored and returned arg type lists for KernelInput parameterization.
@@ -824,6 +879,11 @@ pub fn generate_kernel_launcher(
     }
     let device_op_arg: GenericArgument = parse_quote! { DI };
     struct_args.args.push(device_op_arg.clone());
+    // The launch mode, last (see `LaunchMode`; `_module.rs` defaults it).
+    struct_generics
+        .params
+        .push(parse_quote! { _Mode: #tile_rust_crate_root::tile_kernel::LaunchMode });
+    struct_args.args.push(parse_quote! { _Mode });
 
     // launch_output_type is used for the unified launcher's return type.
     let mut launch_output_type = generic_args.clone();
@@ -879,6 +939,13 @@ pub fn generate_kernel_launcher(
     ));
     launcher_method.block.stmts.push(execute_input_stmt.clone());
     specialization_method.block.stmts.push(execute_input_stmt);
+
+    // `.plan()` records the builder options as set, before the generics
+    // are taken below; outside plan mode this is a branch, not a clone.
+    launcher_method.block.stmts.push(parse_stmt(
+        "let __plan_generics: Option<Vec<String>> = if self._plan_sink.is_some() { self.function_generics.clone() } else { None };"
+            .to_string(),
+    ));
 
     if !required_generics.names.is_empty() {
         let generics_stmt = parse_stmt(format!(
@@ -941,12 +1008,21 @@ pub fn generate_kernel_launcher(
     launcher_method.block.stmts.push(parse_stmt(format!(
         "static __SITE: {tile_rust_crate_root}::tile_kernel::LaunchSite = {tile_rust_crate_root}::tile_kernel::LaunchSite::new();"
     )));
-    launcher_method.block.stmts.push(parse_stmt(
-        "let __const_grid = if self._const_grid { Some(self._grid) } else { None };".to_string(),
-    ));
+    launcher_method.block.stmts.push(parse_stmt(format!(
+        "let __const_grid = {tile_rust_crate_root}::tile_kernel::launcher_const_grid(self._grid, self._const_grid)?;"
+    )));
     launcher_method.block.stmts.push(parse_stmt(
         "let __compile_options = std::mem::take(&mut self._compile_options);".to_string(),
     ));
+    launcher_method.block.stmts.push(parse_stmt(
+        "let __plan_compile_options = if self._plan_sink.is_some() { Some(__compile_options.clone()) } else { None };"
+            .to_string(),
+    ));
+    // Read before resolving, so a resolution cached below can never hold a
+    // function an eviction removed meanwhile (see `CacheEpoch`).
+    launcher_method.block.stmts.push(parse_stmt(format!(
+        "let __epoch = {tile_rust_crate_root}::tile_kernel::CacheEpoch::now();"
+    )));
     launcher_method.block.stmts.push(parse_stmt(
         "let __site_hit = __SITE.get(ctx.get_device_id(), &function_generics, &__specs,          &__hint_vals, __const_grid, &__compile_options);"
             .to_string(),
@@ -972,6 +1048,7 @@ pub fn generate_kernel_launcher(
                 _SOURCE_HASH,
             )?;
             __SITE.store({root}::tile_kernel::SiteResolution::new(
+                __epoch,
                 ctx.get_device_id(),
                 __generics_snapshot,
                 __specs_snapshot,
@@ -990,7 +1067,7 @@ pub fn generate_kernel_launcher(
     )));
 
     let specialization_stmts = syn::parse2::<ExprBlock>(quote! {{
-        let const_grid = if self._const_grid { Some(self._grid) } else { None };
+        let const_grid = #tile_rust_crate_root::tile_kernel::launcher_const_grid(self._grid, self._const_grid)?;
         let compile_options = std::mem::take(&mut self._compile_options);
         return Ok(_specialization_from_context(
             ctx,
@@ -1035,7 +1112,7 @@ pub fn generate_kernel_launcher(
 
     // Above the `!_compile_only` gate so warmup validates the grid too.
     launcher_method.block.stmts.push(parse_stmt(
-        "if self._programmatic_dependent_launch { validate_programmatic_dependent_launch(ctx.get_device_id())?; }".to_string(),
+        format!("if <_Mode as {tile_rust_crate_root}::tile_kernel::LaunchMode>::PROGRAMMATIC_DEPENDENT_LAUNCH {{ validate_programmatic_dependent_launch(ctx.get_device_id())?; }}"),
     ));
     launcher_method.block.stmts.push(parse_stmt(format!(
         "let launch_grid: (u32, u32, u32) = self.infer_launch_grid(&[{}])?;",
@@ -1048,10 +1125,21 @@ pub fn generate_kernel_launcher(
             .to_string(),
     ));
 
-    let mut launch_only_stmts: Vec<Stmt> = vec![parse_stmt(
-        "let mut kernel_launch = AsyncKernelLaunch::new(function.clone());".to_string(),
-    )];
+    let param_count = input_types.len();
+    let mut launch_only_stmts: Vec<Stmt> = vec![
+        parse_stmt(
+            "let mut kernel_launch = AsyncKernelLaunch::new(function.clone());".to_string(),
+        ),
+        // Filled as each parameter is marshalled, so a plan finds every
+        // parameter's slots without re-deriving the marshalling.
+        parse_stmt(format!(
+            "#[allow(unused_mut)] let mut __plan_starts: [usize; {param_count}] = [0; {param_count}];"
+        )),
+    ];
     launch_only_stmts.extend(builder_statements);
+    let plan_layouts: Vec<Expr> = plan_layout_exprs.into_iter().map(parse_expr).collect();
+    // The entry point's marker, generated next to it (see `_module.rs`).
+    let kernel_marker: syn::Path = syn::parse_str(&format!("{function_name}::Kernel")).unwrap();
     launch_only_stmts.extend(
         syn::parse2::<ExprBlock>(quote! {{
             kernel_launch
@@ -1060,12 +1148,37 @@ pub fn generate_kernel_launcher(
                     block_dim: (1, 1, 1),
                     shared_mem_bytes: 0
                 });
-            if self._programmatic_dependent_launch {
+            if <_Mode as #tile_rust_crate_root::tile_kernel::LaunchMode>::PROGRAMMATIC_DEPENDENT_LAUNCH {
                 // SAFETY: the generated builder's unsafe opt-in transferred
                 // the dependency/lifetime obligations to its caller.
                 unsafe { kernel_launch.programmatic_dependent_launch(); }
             }
-            kernel_launch.execute(ctx)?;
+            // `.plan()`: keep the fully resolved launch instead of submitting it.
+            if let Some(__plan_sink) = self._plan_sink.take() {
+                let __plan_options = #tile_rust_crate_root::plan::PlanOptions::from_launcher(
+                    self._grid,
+                    self._const_grid,
+                    __plan_generics,
+                    __plan_compile_options.unwrap_or_default(),
+                );
+                // SAFETY: this is the generated launcher for this entry point,
+                // and `kernel_launch` has passed its validation above; the
+                // layouts, checks and epoch are the ones it resolved with.
+                unsafe {
+                    __plan_sink.capture(ctx, #tile_rust_crate_root::plan::CapturedLaunch {
+                        launch: kernel_launch,
+                        kernel: <#kernel_marker as #tile_rust_crate_root::plan::Kernel>::PATH,
+                        epoch: __epoch,
+                        launch_checks: &validator.launch_checks,
+                        layouts: vec![#(#plan_layouts),*],
+                        param_starts: &__plan_starts,
+                        unsafe_entry: #is_unsafe,
+                        options: __plan_options,
+                    })?;
+                }
+            } else {
+                kernel_launch.execute(ctx)?;
+            }
         }})
         .unwrap()
         .block
@@ -1380,6 +1493,12 @@ pub struct KernelInputInfo {
     pub ko_element_type_names: Vec<String>,
     /// For each param, the index into ko_type_param_names (if partition).
     pub param_kernel_output_idx: Vec<Option<usize>>,
+    /// For each param, its `cutile::plan::param` kind marker type, for
+    /// `Kernel::Params`.
+    pub plan_param_kinds: Vec<String>,
+    /// Whether launch plans can record every parameter. If not, the
+    /// launcher gets no plan methods.
+    pub plannable: bool,
     /// The "recovered" return expression with both KernelInput and KernelOutput recover calls.
     pub recovered_tuple_str: String,
 }

@@ -44,6 +44,9 @@ mod atomic_counter_kernels {
 #[test]
 fn atomic_global_increments_are_unique_across_tile_programs() {
     common::with_test_stack(|| {
+        // Module globals persist only while the module stays loaded; hold
+        // off evictions in other tests.
+        let _guard = common::cache_test_lock();
         const N: usize = 1024;
         let device = cuda_core::Device::new(0).expect("device");
         let stream = device.new_stream().expect("stream");
@@ -66,6 +69,9 @@ use global_kernels::update_counter_ordered;
 #[test]
 fn smoke_global_counter_ordered() {
     common::with_test_stack(|| {
+        // Module globals persist only while the module stays loaded; hold
+        // off evictions in other tests.
+        let _guard = common::cache_test_lock();
         let device = cuda_core::Device::new(0).expect("device");
         let stream = device.new_stream().expect("stream");
 

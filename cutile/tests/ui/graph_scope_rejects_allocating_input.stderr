@@ -7,14 +7,14 @@ error[E0277]: the trait bound `impl cutile::prelude::DeviceOp<Output = cutile::p
    |           required by a bound introduced by this call
    |
    = help: the following other types implement trait `cutile::prelude::GraphNode`:
-             Arange<T, _P0, DI>
-             Convert<SrcType, DstType, _K0, _P0, DI>
+             Arange<T, _P0, DI, _Mode>
+             Convert<SrcType, DstType, _K0, _P0, DI, _Mode>
              DeviceOperationPartition<RANK, I, DI>
-             Eye<_P0, DI>
-             Linspace<_P0, DI>
+             Eye<_P0, DI, _Mode>
+             Linspace<_P0, DI, _Mode>
              Memcpy<'a>
+             PlannedLaunch<A>
              UnwrapPartition<I, DI>
-             cutile::kernels::creation::Full<T, _P0, DI>
            and $N others
    = note: required for `DeviceOperationPartition<1, cutile::prelude::Tensor<f32>, impl cutile::prelude::DeviceOp<Output = cutile::prelude::Tensor<f32>>>` to implement `cutile::prelude::GraphNode`
    = note: 3 redundant requirements hidden

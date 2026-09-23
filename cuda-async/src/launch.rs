@@ -143,7 +143,9 @@ impl AsyncKernelLaunch {
     /// # Safety
     /// `T` must match the size and alignment of the kernel's formal parameter
     /// at this position; the driver copies `size_of::<T>()` bytes from the
-    /// stored value.
+    /// stored value. `T` must have no padding bytes:
+    /// [`into_parts`](Self::into_parts) exposes the slots as initialized
+    /// `u128`s.
     unsafe fn push_arg_raw<T: Copy + Send>(&mut self, arg: T) -> &mut Self {
         self.args.push(arg);
         self
@@ -209,6 +211,43 @@ impl AsyncKernelLaunch {
         })?;
         Ok(())
     }
+
+    /// How many driver arguments have been pushed: the index the next push
+    /// gets in [`KernelLaunchParts::offsets`].
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn arg_count(&self) -> usize {
+        self.args.offsets.len()
+    }
+
+    /// Takes the launch apart without submitting it.
+    #[doc(hidden)]
+    pub fn into_parts(self) -> KernelLaunchParts {
+        KernelLaunchParts {
+            func: self.func,
+            cfg: self.cfg,
+            programmatic_dependent_launch: self.programmatic_dependent_launch,
+            values: self.args.values,
+            offsets: self.args.offsets,
+        }
+    }
+}
+
+/// A resolved launch taken apart: the function, launch configuration, and
+/// argument values laid out exactly as [`AsyncKernelLaunch`] hands them to
+/// the driver. cutile's launch plans keep one as a template and replay it
+/// with new pointers instead of marshalling every argument again.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct KernelLaunchParts {
+    pub func: Arc<Function>,
+    pub cfg: Option<LaunchConfig>,
+    pub programmatic_dependent_launch: bool,
+    /// 16-byte value slots; argument `i` starts at slot `offsets[i]`. Every
+    /// byte is initialized: slots start zeroed, and every pushed argument is
+    /// a type without padding (`DType` and `push_arg_raw` require it).
+    pub values: Vec<u128>,
+    pub offsets: Vec<usize>,
 }
 
 /// A kernel argument that can be pushed from an `Arc` reference.

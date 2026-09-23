@@ -1,0 +1,38 @@
+error[E0599]: no method named `plan_on` found for struct `kernels::Copy<_K0, _P0, DI, _Mode>` in the current scope
+  --> tests/ui/plan_rejects_mapped_partitions.rs:28:60
+   |
+ 5 | #[cutile::module]
+   | ----------------- method `plan_on` not found for this struct
+...
+28 |     let _ = kernels::copy(z.partition([4]).map([1], 2), x).plan_on(stream);
+   |                                                            ^^^^^^^ method not found in `kernels::Copy<&cutile::prelude::Tensor<f32>, MappedLaunchPartition<Partition<cutile::prelude::Tensor<f32>>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<MappedLaunchPartition<Partition<cutile::prelude::Tensor<f32>>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>>`
+
+error[E0599]: no method named `plan_unchecked_on` found for struct `kernels::Copy<_K0, _P0, DI, _Mode>` in the current scope
+  --> tests/ui/plan_rejects_mapped_partitions.rs:36:60
+   |
+ 5 | #[cutile::module]
+   | ----------------- method `plan_unchecked_on` not found for this struct
+...
+36 |     let _ = kernels::copy(z.partition([4]).map([1], 2), x).plan_unchecked_on(stream);
+   |                                                            ^^^^^^^^^^^^^^^^^
+   |
+help: there is a method `then_unchecked` with a similar name
+   |
+36 -     let _ = kernels::copy(z.partition([4]).map([1], 2), x).plan_unchecked_on(stream);
+36 +     let _ = kernels::copy(z.partition([4]).map([1], 2), x).then_unchecked(stream);
+   |
+
+error[E0271]: type mismatch resolving `<Partition<Tensor<f32>> as TensorArg>::Kind == Unsupported`
+  --> tests/ui/plan_rejects_mapped_partitions.rs:44:26
+   |
+44 |     let _ = plan.launch((z.partition([4]), x));
+   |                  ------  ^^^^^^^^^^^^^^^^ expected `Unsupported`, found `Out`
+   |                  |
+   |                  required by a bound introduced by this call
+   |
+   = note: required for `(Partition<cutile::prelude::Tensor<f32>>, &cutile::prelude::Tensor<f32>)` to implement `PlanArgs<(cutile::plan::param::Unsupported, cutile::plan::param::In)>`
+note: required by a bound in `LaunchPlan::<K>::launch`
+  --> src/plan.rs
+   |
+   |     pub fn launch<A: PlanArgs<K::Params>>(&self, args: A) -> PlannedLaunch<A> {
+   |                      ^^^^^^^^^^^^^^^^^^^ required by this bound in `LaunchPlan::<K>::launch`

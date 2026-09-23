@@ -97,6 +97,9 @@ fn logical_operators_lower_to_conditional_regions() {
 #[test]
 fn logical_operators_short_circuit_on_the_device() {
     common::with_test_stack(|| {
+        // Module globals persist only while the module stays loaded; hold
+        // off evictions in other tests.
+        let _guard = common::cache_test_lock();
         let and_launch = |flag: i32| {
             let (out, _flag) = short_circuit_module::short_circuit_and(
                 api::zeros::<i32>(&[1]).partition([1]),

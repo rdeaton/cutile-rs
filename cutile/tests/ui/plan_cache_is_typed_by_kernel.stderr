@@ -1,0 +1,60 @@
+error[E0271]: type mismatch resolving `<Triple<&Tensor<f32>, Partition<&mut Tensor<f32>>, KernelArgs<(PrepareOutput<Value<Partition<&mut Tensor<f32>>>, f32>, PrepareInput<Value<&Tensor<f32>>, f32>)>> as PlanLauncher>::Kernel == Kernel`
+  --> tests/ui/plan_cache_is_typed_by_kernel.rs:37:19
+   |
+37 |     let _ = cache.launch(&PlanOptions::new(), (z.partition([4]), x), stream, |(z, x)| {
+   |                   ^^^^^^ type mismatch resolving `<Triple<&Tensor<f32>, Partition<&mut Tensor<f32>>, KernelArgs<(PrepareOutput<Value<Partition<&mut Tensor<f32>>>, f32>, PrepareInput<Value<&Tensor<f32>>, f32>)>> as PlanLauncher>::Kernel == Kernel`
+   |
+note: expected this to be `double::Kernel`
+  --> tests/ui/plan_cache_is_typed_by_kernel.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+   = note: `triple::Kernel` and `double::Kernel` have similar names, but are actually distinct types
+note: `triple::Kernel` is defined in module `crate::kernels::triple` of the current crate
+  --> tests/ui/plan_cache_is_typed_by_kernel.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+note: `double::Kernel` is defined in module `crate::kernels::double` of the current crate
+  --> tests/ui/plan_cache_is_typed_by_kernel.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+note: required by a bound in `PlanCache::<K>::launch`
+  --> src/plan.rs
+   |
+   |     pub fn launch<A, L>(
+   |            ------ required by a bound in this associated function
+...
+   |         L: PlanLauncher<Kernel = K, Args = A>,
+   |                         ^^^^^^^^^^ required by this bound in `PlanCache::<K>::launch`
+   = note: this error originates in the attribute macro `cutile::module` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `kernels::Raw<&cutile::prelude::Tensor<f32>, Partition<&mut cutile::prelude::Tensor<f32>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<Partition<&mut cutile::prelude::Tensor<f32>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>>: PlanLauncher` is not satisfied
+  --> tests/ui/plan_cache_is_typed_by_kernel.rs:48:19
+   |
+48 |     let _ = cache.launch(&PlanOptions::new(), (z.partition([4]), x), stream, |(z, x)| unsafe {
+   |                   ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `PlanLauncher` is not implemented for `kernels::Raw<&cutile::prelude::Tensor<f32>, Partition<&mut cutile::prelude::Tensor<f32>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<Partition<&mut cutile::prelude::Tensor<f32>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>>`
+  --> tests/ui/plan_cache_is_typed_by_kernel.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `PlanLauncher`:
+             Arange<T, _P0, DI>
+             Convert<SrcType, DstType, _K0, _P0, DI>
+             Double<_K0, _P0, DI>
+             Eye<_P0, DI>
+             Linspace<_P0, DI>
+             Triple<_K0, _P0, DI>
+             cutile::kernels::creation::Full<T, _P0, DI>
+note: required by a bound in `PlanCache::<K>::launch`
+  --> src/plan.rs
+   |
+   |     pub fn launch<A, L>(
+   |            ------ required by a bound in this associated function
+...
+   |         L: PlanLauncher<Kernel = K, Args = A>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `PlanCache::<K>::launch`
+   = note: this error originates in the attribute macro `cutile::module` (in Nightly builds, run with -Z macro-backtrace for more info)

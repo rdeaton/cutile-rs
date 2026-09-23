@@ -193,6 +193,7 @@ static __CUTILE_REEXPORT_TILEIR: cutile_compiler::registry::CutileModuleEntry =
 pub mod api;
 pub mod bench;
 pub mod kernels;
+pub mod plan;
 pub mod prelude;
 pub mod tensor;
 pub mod tile_kernel;

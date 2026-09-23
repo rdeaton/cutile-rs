@@ -1,0 +1,107 @@
+error[E0599]: no method named `launch` found for struct `LaunchPlan<kernels::raw::Kernel, Unchecked>` in the current scope
+  --> tests/ui/plan_safety_is_typed.rs:36:18
+   |
+36 |     let _ = plan.launch((z.partition([4]), x));
+   |                  ^^^^^^
+   |
+help: there is a method `launch_raw` with a similar name, but with different arguments
+  --> src/plan.rs
+   |
+   | /     pub unsafe fn launch_raw(
+   | |         &self,
+   | |         stream: &Stream,
+   | |         args: &[RawArg],
+   | |     ) -> Result<RawLaunch, DeviceError> {
+   | |_______________________________________^
+
+error[E0599]: no method named `plan_on` found for struct `kernels::Raw<_K0, _P0, DI, _Mode>` in the current scope
+  --> tests/ui/plan_safety_is_typed.rs:44:58
+   |
+ 8 | #[cutile::module]
+   | ----------------- method `plan_on` not found for this struct
+...
+44 |     let _ = unsafe { kernels::raw(z.partition([4]), x) }.plan_on(stream);
+   |                                                          ^^^^^^^ method not found in `kernels::Raw<&cutile::prelude::Tensor<f32>, Partition<&mut cutile::prelude::Tensor<f32>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<Partition<&mut cutile::prelude::Tensor<f32>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>>`
+
+error[E0308]: mismatched types
+  --> tests/ui/plan_safety_is_typed.rs:50:56
+   |
+50 |     PlanCache::<kernels::double::Kernel>::new().insert(plan);
+   |                                                 ------ ^^^^ expected `LaunchPlan<Kernel>`, found `LaunchPlan<Kernel, Unchecked>`
+   |                                                 |
+   |                                                 arguments to this method are incorrect
+   |
+   = note: expected struct `LaunchPlan<double::Kernel, Safe>`
+              found struct `LaunchPlan<double::Kernel, Unchecked>`
+note: method defined here
+  --> src/plan.rs
+   |
+   |     pub fn insert(&self, plan: LaunchPlan<K>) {
+   |            ^^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/plan_safety_is_typed.rs:54:56
+   |
+54 |     PlanCache::<kernels::double::Kernel>::new().insert(plan);
+   |                                                 ------ ^^^^ expected `double::Kernel`, found `triple::Kernel`
+   |                                                 |
+   |                                                 arguments to this method are incorrect
+   |
+   = note: `triple::Kernel` and `double::Kernel` have similar names, but are actually distinct types
+note: `triple::Kernel` is defined in module `crate::kernels::triple` of the current crate
+  --> tests/ui/plan_safety_is_typed.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+note: `double::Kernel` is defined in module `crate::kernels::double` of the current crate
+  --> tests/ui/plan_safety_is_typed.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+note: method defined here
+  --> src/plan.rs
+   |
+   |     pub fn insert(&self, plan: LaunchPlan<K>) {
+   |            ^^^^^^
+   = note: this error originates in the attribute macro `cutile::module` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0599]: no method named `plan_on` found for struct `Double<&cutile::prelude::Tensor<f32>, Partition<&mut cutile::prelude::Tensor<f32>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<Partition<&mut cutile::prelude::Tensor<f32>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>, ProgrammaticDependentLaunch>` in the current scope
+  --> tests/ui/plan_safety_is_typed.rs:63:10
+   |
+ 8 |   #[cutile::module]
+   |   ----------------- method `plan_on` not found for this struct
+...
+62 |       let _ = unsafe { kernels::double(z.partition([4]), x).programmatic_dependent_launch() }
+   |  _____________-
+63 | |         .plan_on(stream);
+   | |         -^^^^^^^ method not found in `Double<&cutile::prelude::Tensor<f32>, Partition<&mut cutile::prelude::Tensor<f32>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<Partition<&mut cutile::prelude::Tensor<f32>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>, ProgrammaticDependentLaunch>`
+   | |_________|
+   |
+   |
+   = note: the method was found for `Double<_K0, _P0, DI>`
+
+error[E0277]: the trait bound `Double<&cutile::prelude::Tensor<f32>, Partition<&mut cutile::prelude::Tensor<f32>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<Partition<&mut cutile::prelude::Tensor<f32>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>, ProgrammaticDependentLaunch>: PlanLauncher` is not satisfied
+  --> tests/ui/plan_safety_is_typed.rs:72:19
+   |
+72 |     let _ = cache.launch(
+   |                   ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `PlanLauncher` is not implemented for `Double<&cutile::prelude::Tensor<f32>, Partition<&mut cutile::prelude::Tensor<f32>>, cutile::tile_kernel::KernelArgs<(cutile::tile_kernel::PrepareOutput<cutile::prelude::Value<Partition<&mut cutile::prelude::Tensor<f32>>>, f32>, cutile::tile_kernel::PrepareInput<cutile::prelude::Value<&cutile::prelude::Tensor<f32>>, f32>)>, ProgrammaticDependentLaunch>`
+  --> tests/ui/plan_safety_is_typed.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+help: the trait `PlanLauncher` is implemented for `Double<_K0, _P0, DI>`
+  --> tests/ui/plan_safety_is_typed.rs:8:1
+   |
+ 8 | #[cutile::module]
+   | ^^^^^^^^^^^^^^^^^
+note: required by a bound in `PlanCache::<K>::launch`
+  --> src/plan.rs
+   |
+   |     pub fn launch<A, L>(
+   |            ------ required by a bound in this associated function
+...
+   |         L: PlanLauncher<Kernel = K, Args = A>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `PlanCache::<K>::launch`
+   = note: this error originates in the attribute macro `cutile::module` (in Nightly builds, run with -Z macro-backtrace for more info)

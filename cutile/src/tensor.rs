@@ -1453,8 +1453,8 @@ impl<T: DType> Reshape for &Arc<Tensor<T>> {
 /// // view dropped — tensor can be mutated again
 /// ```
 pub struct TensorView<'a, T: DType> {
-    base: &'a Tensor<T>,
-    offset_bytes: usize,
+    pub(crate) base: &'a Tensor<T>,
+    pub(crate) offset_bytes: usize,
     shape: Vec<i32>,
     strides: Vec<i32>,
     spec: SpecializationBits,
@@ -1882,6 +1882,12 @@ pub trait KernelOutputStored<T: DType>: Send {
     fn strides_hint(&self) -> Vec<i32>;
     fn spec(&self) -> &SpecializationBits;
     fn shape_as_i32(&self) -> Vec<i32>;
+    /// This binding's layout, for [`crate::plan::LaunchPlan`]. The default
+    /// refuses the binding: building a plan of a kernel given it fails.
+    #[doc(hidden)]
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Err(crate::plan::UnsupportedParam(std::any::type_name::<Self>()))
+    }
 }
 
 /// How a `&mut Tensor` kernel param is stored during execution and recovered.
@@ -1899,6 +1905,9 @@ pub trait KernelOutput<T: DType>: Send + Sized {
 }
 
 impl<T: DType> KernelOutputStored<T> for Partition<Tensor<T>> {
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Ok(crate::plan::tensor_layout(self))
+    }
     fn retain(&self, ctx: &ExecutionContext) -> Result<(), DeviceError> {
         self.object.storage.retain(ctx, true)
     }
@@ -1913,7 +1922,7 @@ impl<T: DType> KernelOutputStored<T> for Partition<Tensor<T>> {
 
     fn push_kernel_args(&self, launcher: &mut AsyncKernelLaunch) {
         unsafe {
-            launcher.push_device_ptr(self.object.cu_deviceptr());
+            launcher.push_device_ptr(crate::plan::TensorArg::device_ptr(self));
         }
         for dim in self.object.shape.iter() {
             launcher.push_arg(*dim);
@@ -1954,6 +1963,9 @@ impl<T: DType> KernelOutputStored<T> for Partition<Tensor<T>> {
 }
 
 impl<T: DType> KernelOutputStored<T> for Partition<&mut Tensor<T>> {
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Ok(crate::plan::tensor_layout(self))
+    }
     fn retain(&self, ctx: &ExecutionContext) -> Result<(), DeviceError> {
         self.object.storage.retain(ctx, true)
     }
@@ -1968,7 +1980,7 @@ impl<T: DType> KernelOutputStored<T> for Partition<&mut Tensor<T>> {
 
     fn push_kernel_args(&self, launcher: &mut AsyncKernelLaunch) {
         unsafe {
-            launcher.push_device_ptr(self.object.cu_deviceptr());
+            launcher.push_device_ptr(crate::plan::TensorArg::device_ptr(self));
         }
         for dim in self.object.shape.iter() {
             launcher.push_arg(*dim);
@@ -2009,6 +2021,9 @@ impl<T: DType> KernelOutputStored<T> for Partition<&mut Tensor<T>> {
 }
 
 impl<T: DType> KernelOutputStored<T> for MappedLaunchPartition<Partition<Tensor<T>>> {
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Err(crate::plan::UnsupportedParam("mapped partition output"))
+    }
     fn retain(&self, ctx: &ExecutionContext) -> Result<(), DeviceError> {
         self.partition.retain(ctx)
     }
@@ -2046,6 +2061,9 @@ impl<T: DType> KernelOutputStored<T> for MappedLaunchPartition<Partition<Tensor<
 }
 
 impl<T: DType> KernelOutputStored<T> for MappedLaunchPartition<Partition<&mut Tensor<T>>> {
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Err(crate::plan::UnsupportedParam("mapped partition output"))
+    }
     fn retain(&self, ctx: &ExecutionContext) -> Result<(), DeviceError> {
         self.partition.retain(ctx)
     }
@@ -2147,6 +2165,12 @@ pub trait KernelInputStored: Send {
     fn strides(&self) -> &[i32];
     fn spec(&self) -> &SpecializationBits;
     fn dtype_str(&self) -> &'static str;
+    /// This input's layout, for [`crate::plan::LaunchPlan`]. The default
+    /// refuses the input: building a plan of a kernel given it fails.
+    #[doc(hidden)]
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Err(crate::plan::UnsupportedParam(std::any::type_name::<Self>()))
+    }
 }
 
 /// Converts a user-provided kernel input into a stored form for execution,
@@ -2167,12 +2191,15 @@ pub trait KernelInput<T: DType>: Send + Sized {
 // ── KernelInputStored impls ─────────────────────────────────────────────────
 
 impl<T: DType> KernelInputStored for Arc<Tensor<T>> {
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Ok(crate::plan::tensor_layout(self))
+    }
     fn retain(&self, ctx: &ExecutionContext) -> Result<(), DeviceError> {
         self.storage.retain(ctx, false)
     }
     fn push_kernel_args(&self, launcher: &mut AsyncKernelLaunch) {
         unsafe {
-            launcher.push_device_ptr(self.cu_deviceptr());
+            launcher.push_device_ptr(crate::plan::TensorArg::device_ptr(self));
         }
         for dim in self.shape.iter() {
             launcher.push_arg(*dim);
@@ -2196,12 +2223,15 @@ impl<T: DType> KernelInputStored for Arc<Tensor<T>> {
 }
 
 impl<T: DType + Sync> KernelInputStored for &Tensor<T> {
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Ok(crate::plan::tensor_layout(self))
+    }
     fn retain(&self, ctx: &ExecutionContext) -> Result<(), DeviceError> {
         self.storage.retain(ctx, false)
     }
     fn push_kernel_args(&self, launcher: &mut AsyncKernelLaunch) {
         unsafe {
-            launcher.push_device_ptr(self.cu_deviceptr());
+            launcher.push_device_ptr(crate::plan::TensorArg::device_ptr(self));
         }
         for dim in self.shape.iter() {
             launcher.push_arg(*dim);
@@ -2262,14 +2292,18 @@ impl<'a, T: DType + Sync> KernelInput<T> for &'a Tensor<T> {
 // ── TensorView KernelInput impls ────────────────────────────────────────────
 
 impl<'a, T: DType + Sync> KernelInputStored for &'a TensorView<'a, T> {
+    fn plan_layout(&self) -> Result<crate::plan::ArgLayout, crate::plan::UnsupportedParam> {
+        Ok(crate::plan::tensor_layout(self))
+    }
     fn retain(&self, ctx: &ExecutionContext) -> Result<(), DeviceError> {
         self.base.storage.retain(ctx, false)
     }
     fn push_kernel_args(&self, launcher: &mut AsyncKernelLaunch) {
         // Push the already-offset device pointer. The offset is applied
-        // host-side so the kernel sees the correct base address directly.
+        // host-side so the kernel sees the correct base address directly;
+        // launch plans write the same pointer on replay.
         unsafe {
-            launcher.push_device_ptr(self.base.cu_deviceptr() + self.offset_bytes as u64);
+            launcher.push_device_ptr(crate::plan::TensorArg::device_ptr(self));
         }
         for dim in self.shape.iter() {
             launcher.push_arg(*dim);

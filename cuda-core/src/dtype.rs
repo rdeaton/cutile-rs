@@ -210,6 +210,11 @@ impl Display for DTypeId {
 /// pattern is valid. For `bool` the promise rests on device code storing only
 /// `0` or `1`: the DSL guarantees that for the kernels it compiles, and any
 /// foreign memory borrowed as a `Tensor<bool>` must uphold it too.
+///
+/// Implementors also promise that `Self` has **no padding bytes**. Kernel
+/// launches copy a scalar argument's bytes whole into an argument slot and
+/// read the slot back as plain bytes, which would read uninitialized memory
+/// if `Self` had padding.
 pub unsafe trait DType: Send + Sync + Copy + Debug + 'static {
     /// The runtime data type identifier for this scalar type.
     const DTYPE: DTypeId;

@@ -20,12 +20,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   exp/tanh rounding, full-width/general-rank assumptions, private/constant
   globals, and module producer metadata. Existing signatures are preserved.
 - Unsafe per-launch `programmatic_dependent_launch()` on generated builders
-  and `AsyncKernelLaunch`, with runtime driver entry-point lookup.
+  and `AsyncKernelLaunch`, with runtime driver entry-point lookup. Generated
+  builders carry their launch mode as a trailing type parameter,
+  `StandardLaunch` by default; the opt-in returns a
+  `ProgrammaticDependentLaunch` builder, which cannot build a `Safe` plan.
+  Code that names a launcher type with all its parameters, or implements
+  on one, must account for the new parameter.
 - Tile IR 13.4 bytecode with selected-assembler version negotiation and
   conjunctive version/architecture checks before JIT assembly. The writer
   preserves 13.2/13.3 layouts and rejects newer features when targeting them.
+- Launch plans (`cutile::plan`), which resolve a launch once per argument
+  layout and replay it writing only pointers and scalars:
+  - Each entry point `f` gains a marker type `f::Kernel`, and a plan is a
+    `LaunchPlan<f::Kernel, S>`, where `S` says how it may launch. The
+    marker's `Params` lists the parameter kinds (`cutile::plan::param`), so
+    a plan's arguments are checked at compile time: their count, and
+    whether each is a tensor input, a partitioned output, or a scalar of
+    the declared type.
+  - Generated launchers of safe entry points gain `plan()` / `plan_on()`,
+    which build a `Safe` plan; `LaunchPlan::launch` replays it, validating
+    the layout and retaining tensors like a generated launch.
+  - Every generated launcher gains `plan_unchecked()` /
+    `plan_unchecked_on()`, which build an `Unchecked` plan: the only kind
+    an `unsafe` entry point, or a launcher with programmatic dependent
+    launch, can build. It launches only through unsafe `launch_unchecked`.
+    Unsafe `launch_raw` takes device pointers, for either kind, and returns
+    a `RawLaunch` guard that keeps the kernel's module loaded until the
+    caller drops it after the kernel completes.
+    Unsafe `launch_raw_unchecked` is `launch_raw` without its argument
+    checks (run only in debug builds) or its guard: the caller upholds them,
+    and keeps the plan alive until the kernel completes.
+  - Kernels with a `MappedPartitionMut` parameter cannot be planned: their
+    launchers have no plan methods, and the parameter's kind is
+    `param::Unsupported`.
+  - `with_options()` sets exactly the given `PlanOptions` on a launcher.
+  - `PlanCache<f::Kernel>` holds one kernel's `Safe` plans, keyed by device,
+    options and layout; another kernel's plan or an `Unchecked` one is a
+    type error. Evicting from the kernel cache empties every plan cache.
+  - `plan_launch!` gives each call site its own cache.
+  - `KernelInputStored` and `KernelOutputStored` gain a `plan_layout`
+    method. Its default refuses the binding, so plans of a kernel given an
+    implementation outside cutile fail to build.
 
 ### Changed
+
+- A generated launcher's launch site keeps every specialization it resolved,
+  looked up by hash, instead of only the last one, so a kernel alternating
+  between shapes no longer re-resolves on every launch. Every eviction from
+  the kernel cache, including a selective `evict_kernel` or
+  `retain_kernels`, empties every launch site and every `PlanCache`, so the
+  next launch of each kernel re-resolves. `SiteResolution::new`, called by
+  generated launchers, takes the `CacheEpoch` read before resolving as its
+  first argument, and `LaunchSite::store` takes `&'static self`, so
+  `cutile` and `cutile-macro` must be upgraded together.
+
+- `DType` implementors must also guarantee that the type has no padding
+  bytes: launches copy a scalar's bytes whole into an argument slot. Every
+  built-in `DType` already satisfies this; an implementation outside
+  cuda-core must now uphold it too.
 
 - `Tensor::store` returns its completion `Token`; `Tensor::token` reads it
   and unsafe `Tensor::set_token` installs an external dependency. Explicit
@@ -57,6 +109,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   serving engines to manage cached specializations independently of
   autotuning. Their unsafe quiesce-before-eviction contracts and return
   values are unchanged (#268).
+
+### Fixed
+
+- A generated launcher's `.const_grid((0, 0, 0))` fails the launch. It
+  previously compiled the kernel for an empty grid and launched it on the
+  inferred one.
 
 ## [0.3.1] - 2026-09-02
 

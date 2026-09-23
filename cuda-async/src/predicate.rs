@@ -278,6 +278,11 @@ impl Term {
         Some((atom, scale, self.constant))
     }
 
+    /// The atoms the term reads.
+    pub fn atoms(&self) -> impl Iterator<Item = &Atom> {
+        self.coeffs.keys()
+    }
+
     /// Evaluate given a resolver from atom to concrete value. `None` if any atom
     /// is unresolved or arithmetic overflows.
     pub fn eval(&self, resolve_atom: &impl Fn(&Atom) -> Option<i64>) -> Option<i64> {
@@ -367,6 +372,16 @@ impl Predicate {
         match self {
             Predicate::Zero(t) | Predicate::Nonzero(t) | Predicate::Positive(t) => t.stage(),
             Predicate::DivisibleBy { term, .. } => term.stage(),
+        }
+    }
+
+    /// The atoms the predicate reads.
+    pub fn atoms(&self) -> impl Iterator<Item = &Atom> {
+        match self {
+            Predicate::Zero(t)
+            | Predicate::Nonzero(t)
+            | Predicate::Positive(t)
+            | Predicate::DivisibleBy { term: t, .. } => t.atoms(),
         }
     }
 
@@ -471,6 +486,16 @@ mod tests {
         // Two atoms do not project (richer than single-var affine).
         let two = Term::atom(dim(0, 0)).add(&Term::atom(dim(1, 0))).unwrap();
         assert_eq!(two.as_single_affine(), None);
+    }
+
+    #[test]
+    fn predicate_atoms_lists_every_operand() {
+        let term = Term::atom(dim(0, 1))
+            .add(&Term::atom(Atom::NumTileBlocks(0)))
+            .unwrap();
+        let pred = Predicate::divisible_by(term, 4).unwrap();
+        let atoms: Vec<Atom> = pred.atoms().copied().collect();
+        assert_eq!(atoms, vec![dim(0, 1), Atom::NumTileBlocks(0)]);
     }
 
     #[test]
